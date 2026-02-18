@@ -1,0 +1,100 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+
+CSV_FILENAME = "simulation_results_with_history.csv"
+
+
+def plot_history_effect_bar(df: pd.DataFrame) -> None:
+    """Bar plot: P(gamble | prev certain) vs P(gamble | prev gamble)."""
+    df = df.copy()
+    df = df[df["Trial"] > 1]  # first trial has no meaningful history
+
+    p_after_certain = df[df["History_LastAction"] == -1]["Choice"].mean()
+    p_after_gamble = df[df["History_LastAction"] == 1]["Choice"].mean()
+
+    print(f"P(Gamble | Previous Certain): {p_after_certain:.3f}")
+    print(f"P(Gamble | Previous Gamble):  {p_after_gamble:.3f}")
+
+    plt.figure(figsize=(6, 5))
+    plt.bar(["Prev Certain", "Prev Gamble"], [p_after_certain, p_after_gamble])
+    plt.ylim(0, 1)
+    plt.ylabel("Probability of Gambling")
+    plt.title("History Effect: Decision based on Previous Action")
+    plt.grid(axis="y", alpha=0.3)
+    plt.show()
+
+
+def plot_psychometric_by_history(df: pd.DataFrame, n_bins: int = 20) -> None:
+    """
+    Psychometric curves separated by previous action.
+    Plots binned P(gamble) as a function of Delta_SV for:
+      - After Certain (History_LastAction = -1)
+      - After Gamble  (History_LastAction =  1)
+    """
+    df = df.copy()
+    df = df[df["Trial"] > 1]  # exclude first trial
+
+    # Bin by Delta_SV
+    df["Delta_bin"] = pd.cut(df["Delta_SV"], bins=n_bins)
+
+    # Mean choice per bin per history condition
+    grouped = (
+        df.groupby(["History_LastAction", "Delta_bin"], observed=True)["Choice"]
+        .mean()
+        .reset_index()
+    )
+
+    # Bin centers (mean Delta_SV within each bin, computed across all trials)
+    delta_means = df.groupby("Delta_bin", observed=True)["Delta_SV"].mean()
+
+    # Reindex to ensure both history series align with delta_means bins
+    idx = delta_means.index
+    after_certain = (
+        grouped[grouped["History_LastAction"] == -1]
+        .set_index("Delta_bin")
+        .reindex(idx)["Choice"]
+    )
+    after_gamble = (
+        grouped[grouped["History_LastAction"] == 1]
+        .set_index("Delta_bin")
+        .reindex(idx)["Choice"]
+    )
+
+    # Plot
+    plt.figure(figsize=(7, 6))
+    plt.plot(delta_means.values, after_certain.values, marker="o", label="After Certain")
+    plt.plot(delta_means.values, after_gamble.values, marker="o", label="After Gamble")
+
+    plt.xlabel("ΔSV (binned mean)")
+    plt.ylabel("P(Gamble)")
+    plt.title("Psychometric Curves by Previous Action (History)")
+    plt.ylim(0, 1)
+    plt.grid(alpha=0.3)
+    plt.legend()
+    plt.show()
+
+
+def main():
+    # Load CSV (same folder as this script)
+    df = pd.read_csv(CSV_FILENAME)
+
+    # Basic checks
+    needed = {"Trial", "Delta_SV", "History_LastAction", "Choice"}
+    missing = needed - set(df.columns)
+    if missing:
+        raise ValueError(
+            f"CSV is missing required columns: {missing}\n"
+            f"Found columns: {list(df.columns)}"
+        )
+
+    # Optional: if you ran 100 simulations, you can filter one simulation:
+    # df = df[df["Simulation"] == 1].copy()
+
+    plot_history_effect_bar(df)
+    plot_psychometric_by_history(df, n_bins=20)
+
+
+if __name__ == "__main__":
+    main()
