@@ -1,0 +1,96 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from scipy.stats import truncnorm
+
+# Display all columns and rows in Pandas
+pd.set_option('display.max_columns', None)
+pd.set_option('display.max_rows', None)
+
+def get_truncated_normal(mean, std, lower, upper):
+    a, b = (lower - mean) / std, (upper - mean) / std
+    return truncnorm.rvs(a, b, loc=mean, scale=std)
+
+def prospect_theory_value(p, V, alpha, beta):
+    """Computes the subjective value (SV) of a prospect."""
+    weighted_probability = p ** (1 - beta)  # Adjust probability perception
+    subjective_value = weighted_probability * (V ** alpha)  # Compute subjective value
+    return subjective_value
+
+def choice_probability(delta_sv, mu):
+    """Computes the probability of choosing the risky option using a logistic function."""
+    return 1 / (1 + np.exp(-mu * delta_sv))
+
+def run_simulation(alpha, beta, mu, trials, sim_num):
+    """Runs a simulation with given alpha, beta, mu, number of trials, and simulation number."""
+
+    probability_risky_options = [0.5, 0.9]  # Only 0.5 or 0.9
+    reward_risky_options = np.linspace(0.25, 4.0, 1000)  # 1000 values between 0.25 and 4
+    reward_certain = 1  # Guaranteed reward for certain option
+
+    # Data storage
+    data = {
+        "Simulation": [],
+        "Alpha": [],
+        "Beta": [],
+        "Mu": [],
+        "Trial": [],
+        "Probability_Risky": [],
+        "Reward_Risky": [],
+        "SV_Risky": [],
+        "SV_Certain": [],
+        "Delta_SV": [],
+        "P_Risky": [],
+        "Choice": []
+    }
+
+    for trial in range(trials):
+        probability_risky = np.random.choice(probability_risky_options)  # Randomly 0.5 or 0.9
+        reward_risky = np.random.choice(reward_risky_options)
+
+        # Compute subjective values
+        sv_risky = prospect_theory_value(probability_risky, reward_risky, alpha, beta)
+        sv_certain = reward_certain ** alpha  # Certain value follows power of alpha
+
+        # Compute ΔSV and probability of choosing risky option
+        delta_sv = sv_risky - sv_certain
+        p_risky = choice_probability(delta_sv, mu)
+
+        # Simulate choice based on probability: 1 = risky, 0 = certain
+        choice = 1 if np.random.rand() < p_risky else 0
+
+        # Store data
+        data["Simulation"].append(sim_num)
+        data["Alpha"].append(alpha)
+        data["Beta"].append(beta)
+        data["Mu"].append(mu)
+        data["Trial"].append(trial + 1)
+        data["Probability_Risky"].append(probability_risky)
+        data["Reward_Risky"].append(reward_risky)
+        data["SV_Risky"].append(sv_risky)
+        data["SV_Certain"].append(sv_certain)
+        data["Delta_SV"].append(delta_sv)
+        data["P_Risky"].append(p_risky)
+        data["Choice"].append(choice)
+
+    return pd.DataFrame(data)
+
+# Generate parameters
+alpha = get_truncated_normal(0.65, 0.33, 0.05, np.inf)  # (α)
+beta = get_truncated_normal(0.30, 0.24, 0, 1)  # (β)
+mu = get_truncated_normal(6.77, 3.01, 0.05, np.inf)  # (μ)
+
+# Run the simulation for 100 times, each with 1000 trials
+all_results = []
+for sim_num in range(1, 101):
+    df_results = run_simulation(alpha, beta, mu, 1000, sim_num)
+    all_results.append(df_results)
+
+# Combine all results into a single DataFrame
+final_results = pd.concat(all_results, ignore_index=True)
+print(final_results.head())
+
+# Save results
+csv_filename = "simulation_results.csv"
+final_results.to_csv(csv_filename, index=False)
+print(f"Results saved to {csv_filename}")
