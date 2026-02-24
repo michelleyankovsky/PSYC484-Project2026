@@ -1,0 +1,10 @@
+import pandas as pd
+
+DATA_PATH = "/Users/michelleyankovsky/Desktop/Phase2_data (1).csv"
+
+df = pd.read_csv(DATA_PATH)
+
+print("Loaded successfully!")
+print("Shape:", df.shape)
+print("Columns:", df.columns.tolist())
+print(df.head())
