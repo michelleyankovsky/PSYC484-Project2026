@@ -1,0 +1,440 @@
+import numpy as np
+import pandas as pd
+from scipy.optimize import minimize
+from scipy.special import expit
+
+# =========================================================
+# CONFIG
+# =========================================================
+
+DATA_PATH = "/Users/michelleyankovsky/Desktop/Phase2_data (1).csv"
+
+CHOICE_COL = "response"
+DELTA_SV_COL = "SPTdeltaSV"
+SUBJECT_COL = "PID"
+SV_RISKY_COL = None
+SV_CERTAIN_COL = None
+
+# Optional: subject column if you want to fit each participant separately
+SUBJECT_COL = None             # example: "participant"
+
+# Optimization settings
+METHOD = "L-BFGS-B"
+CLIP_EPS = 1e-10
+
+# =========================================================
+# DATA LOADING
+# =========================================================
+
+def load_data(path):
+    df = pd.read_csv(path)
+    print("Loaded successfully!")
+    print("Shape:", df.shape)
+    print("Columns:", df.columns.tolist())
+    print(df.head())
+    return df
+
+# =========================================================
+# HELPERS
+# =========================================================
+
+def standardize_choice_column(df, choice_col):
+    """
+    Ensures choice column is numeric 0/1.
+    Accepts already-coded 0/1 or some common text labels.
+    """
+    df = df.copy()
+
+    if pd.api.types.is_numeric_dtype(df[choice_col]):
+        unique_vals = set(pd.Series(df[choice_col]).dropna().unique())
+        if unique_vals.issubset({0, 1}):
+            return df
+        elif unique_vals.issubset({1, 2}):
+            # convert 1/2 -> 0/1
+            df[choice_col] = df[choice_col] - 1
+            return df
+
+    mapping = {
+        "risky": 1,
+        "gamble": 1,
+        "risk": 1,
+        "certain": 0,
+        "safe": 0,
+        "sure": 0,
+    }
+
+    lowered = df[choice_col].astype(str).str.lower().str.strip()
+    mapped = lowered.map(mapping)
+
+    if mapped.isna().any():
+        bad_vals = df.loc[mapped.isna(), choice_col].unique()
+        raise ValueError(
+            f"Could not convert choice column '{choice_col}' to 0/1. "
+            f"Unrecognized values: {bad_vals}"
+        )
+
+    df[choice_col] = mapped.astype(int)
+    return df
+
+
+def prepare_delta_sv(df, delta_sv_col, sv_risky_col=None, sv_certain_col=None):
+    """
+    Makes sure df has a delta_sv column.
+    If delta_sv already exists, uses it.
+    Otherwise computes delta_sv = sv_risky - sv_certain.
+    """
+    df = df.copy()
+
+    if delta_sv_col in df.columns:
+        df[delta_sv_col] = pd.to_numeric(df[delta_sv_col], errors="coerce")
+        return df
+
+    if sv_risky_col is not None and sv_certain_col is not None:
+        if sv_risky_col not in df.columns or sv_certain_col not in df.columns:
+            raise ValueError(
+                f"Could not find '{sv_risky_col}' and/or '{sv_certain_col}' in the dataframe."
+            )
+        df[delta_sv_col] = (
+            pd.to_numeric(df[sv_risky_col], errors="coerce")
+            - pd.to_numeric(df[sv_certain_col], errors="coerce")
+        )
+        return df
+
+    raise ValueError(
+        f"Column '{delta_sv_col}' not found, and no risky/certain SV columns were provided."
+    )
+
+
+def add_history_columns(df, choice_col="choice"):
+    """
+    Adds:
+      prev_risky   = 1 if previous choice was risky, else 0
+      prev_certain = 1 if previous choice was certain, else 0
+
+    First trial gets 0 for both.
+    """
+    df = df.copy()
+    prev_choice = df[choice_col].shift(1)
+
+    df["prev_risky"] = (prev_choice == 1).astype(int)
+    df["prev_certain"] = (prev_choice == 0).astype(int)
+
+    if len(df) > 0:
+        df.loc[df.index[0], ["prev_risky", "prev_certain"]] = 0
+
+    return df
+
+
+def clean_model_data(df, choice_col, delta_sv_col, subject_col=None):
+    """
+    Keeps only required rows and sorts by subject if needed.
+    """
+    cols_needed = [choice_col, delta_sv_col]
+    if subject_col is not None:
+        cols_needed.append(subject_col)
+
+    missing = [c for c in cols_needed if c not in df.columns]
+    if missing:
+        raise ValueError(f"Missing required columns: {missing}")
+
+    out = df.copy()
+
+    out[choice_col] = pd.to_numeric(out[choice_col], errors="coerce")
+    out[delta_sv_col] = pd.to_numeric(out[delta_sv_col], errors="coerce")
+
+    out = out.dropna(subset=[choice_col, delta_sv_col])
+
+    out[choice_col] = out[choice_col].astype(int)
+
+    if not set(out[choice_col].unique()).issubset({0, 1}):
+        raise ValueError(f"Choice column '{choice_col}' must contain only 0/1 after cleaning.")
+
+    if subject_col is not None:
+        out = out.sort_values([subject_col]).reset_index(drop=True)
+    else:
+        out = out.reset_index(drop=True)
+
+    return out
+
+# =========================================================
+# NEGATIVE LOG-LIKELIHOOD FUNCTIONS
+# =========================================================
+
+def neg_ll_original(params, df, choice_col="choice", delta_sv_col="delta_sv"):
+    """
+    Original model:
+        logit(P(risky_t)) = beta0 + beta1 * delta_sv_t
+    """
+    beta0, beta1 = params
+
+    y = df[choice_col].to_numpy()
+    delta_sv = df[delta_sv_col].to_numpy()
+
+    z = beta0 + beta1 * delta_sv
+    p = expit(z)
+    p = np.clip(p, CLIP_EPS, 1 - CLIP_EPS)
+
+    ll = np.sum(y * np.log(p) + (1 - y) * np.log(1 - p))
+    return -ll
+
+
+def neg_ll_history(params, df, choice_col="choice", delta_sv_col="delta_sv"):
+    """
+    History model:
+        logit(P(risky_t)) = beta0 + beta1 * delta_sv_t
+                              + kappa * prev_risky
+                              + theta * prev_certain
+    """
+    beta0, beta1, kappa, theta = params
+
+    y = df[choice_col].to_numpy()
+    delta_sv = df[delta_sv_col].to_numpy()
+    prev_risky = df["prev_risky"].to_numpy()
+    prev_certain = df["prev_certain"].to_numpy()
+
+    z = beta0 + beta1 * delta_sv + kappa * prev_risky + theta * prev_certain
+    p = expit(z)
+    p = np.clip(p, CLIP_EPS, 1 - CLIP_EPS)
+
+    ll = np.sum(y * np.log(p) + (1 - y) * np.log(1 - p))
+    return -ll
+
+# =========================================================
+# FITTING FUNCTIONS
+# =========================================================
+
+def fit_original_model(df, choice_col="choice", delta_sv_col="delta_sv"):
+    x0 = np.array([0.0, 1.0], dtype=float)
+
+    result = minimize(
+        neg_ll_original,
+        x0=x0,
+        args=(df, choice_col, delta_sv_col),
+        method=METHOD
+    )
+
+    return {
+        "success": result.success,
+        "message": result.message,
+        "nll": float(result.fun),
+        "beta0": float(result.x[0]),
+        "beta1": float(result.x[1]),
+        "k": 2,
+        "n": len(df),
+        "result_obj": result,
+    }
+
+
+def fit_history_model(df, choice_col="choice", delta_sv_col="delta_sv"):
+    df_hist = add_history_columns(df, choice_col=choice_col)
+
+    x0 = np.array([0.0, 1.0, 0.0, 0.0], dtype=float)
+
+    result = minimize(
+        neg_ll_history,
+        x0=x0,
+        args=(df_hist, choice_col, delta_sv_col),
+        method=METHOD
+    )
+
+    return {
+        "success": result.success,
+        "message": result.message,
+        "nll": float(result.fun),
+        "beta0": float(result.x[0]),
+        "beta1": float(result.x[1]),
+        "kappa": float(result.x[2]),
+        "theta": float(result.x[3]),
+        "k": 4,
+        "n": len(df_hist),
+        "result_obj": result,
+        "df_with_history": df_hist,
+    }
+
+# =========================================================
+# MODEL COMPARISON
+# =========================================================
+
+def compute_aic(nll, k):
+    return 2 * k + 2 * nll
+
+
+def compute_bic(nll, k, n):
+    return k * np.log(n) + 2 * nll
+
+
+def summarize_model_fit(name, fit_dict):
+    print(f"\n{name}")
+    print("-" * len(name))
+    print("Success:", fit_dict["success"])
+    print("Message:", fit_dict["message"])
+    print("NLL:", round(fit_dict["nll"], 4))
+
+    for key, val in fit_dict.items():
+        if key in {"success", "message", "nll", "k", "n", "result_obj", "df_with_history"}:
+            continue
+        print(f"{key}: {round(val, 6)}")
+
+    aic = compute_aic(fit_dict["nll"], fit_dict["k"])
+    bic = compute_bic(fit_dict["nll"], fit_dict["k"], fit_dict["n"])
+
+    print("AIC:", round(aic, 4))
+    print("BIC:", round(bic, 4))
+
+
+def compare_two_models(orig_fit, hist_fit):
+    orig_aic = compute_aic(orig_fit["nll"], orig_fit["k"])
+    hist_aic = compute_aic(hist_fit["nll"], hist_fit["k"])
+
+    orig_bic = compute_bic(orig_fit["nll"], orig_fit["k"], orig_fit["n"])
+    hist_bic = compute_bic(hist_fit["nll"], hist_fit["k"], hist_fit["n"])
+
+    print("\nModel Comparison")
+    print("----------------")
+    print(f"Original model AIC: {orig_aic:.4f}")
+    print(f"History  model AIC: {hist_aic:.4f}")
+    print(f"Original model BIC: {orig_bic:.4f}")
+    print(f"History  model BIC: {hist_bic:.4f}")
+
+    if hist_aic < orig_aic:
+        print("AIC prefers the history model.")
+    else:
+        print("AIC prefers the original model.")
+
+    if hist_bic < orig_bic:
+        print("BIC prefers the history model.")
+    else:
+        print("BIC prefers the original model.")
+
+# =========================================================
+# OPTIONAL: FIT BY SUBJECT
+# =========================================================
+
+def fit_models_by_subject(df, subject_col, choice_col="choice", delta_sv_col="delta_sv"):
+    results = []
+
+    for subject, subdf in df.groupby(subject_col):
+        subdf = subdf.reset_index(drop=True)
+
+        # skip tiny datasets
+        if len(subdf) < 5:
+            continue
+
+        try:
+            orig_fit = fit_original_model(subdf, choice_col=choice_col, delta_sv_col=delta_sv_col)
+            hist_fit = fit_history_model(subdf, choice_col=choice_col, delta_sv_col=delta_sv_col)
+
+            results.append({
+                subject_col: subject,
+                "n_trials": len(subdf),
+
+                "orig_success": orig_fit["success"],
+                "orig_nll": orig_fit["nll"],
+                "orig_beta0": orig_fit["beta0"],
+                "orig_beta1": orig_fit["beta1"],
+                "orig_aic": compute_aic(orig_fit["nll"], orig_fit["k"]),
+                "orig_bic": compute_bic(orig_fit["nll"], orig_fit["k"], orig_fit["n"]),
+
+                "hist_success": hist_fit["success"],
+                "hist_nll": hist_fit["nll"],
+                "hist_beta0": hist_fit["beta0"],
+                "hist_beta1": hist_fit["beta1"],
+                "hist_kappa": hist_fit["kappa"],
+                "hist_theta": hist_fit["theta"],
+                "hist_aic": compute_aic(hist_fit["nll"], hist_fit["k"]),
+                "hist_bic": compute_bic(hist_fit["nll"], hist_fit["k"], hist_fit["n"]),
+            })
+
+        except Exception as e:
+            results.append({
+                subject_col: subject,
+                "n_trials": len(subdf),
+                "error": str(e)
+            })
+
+    return pd.DataFrame(results)
+
+# =========================================================
+# MAIN PIPELINE
+# =========================================================
+
+def run_all():
+    df = load_data(DATA_PATH)
+
+    if CHOICE_COL not in df.columns:
+        raise ValueError(
+            f"Choice column '{CHOICE_COL}' not found. "
+            f"Available columns: {df.columns.tolist()}"
+        )
+
+    df = standardize_choice_column(df, CHOICE_COL)
+    df = prepare_delta_sv(
+        df,
+        delta_sv_col=DELTA_SV_COL,
+        sv_risky_col=SV_RISKY_COL,
+        sv_certain_col=SV_CERTAIN_COL
+    )
+    df = clean_model_data(
+        df,
+        choice_col=CHOICE_COL,
+        delta_sv_col=DELTA_SV_COL,
+        subject_col=SUBJECT_COL
+    )
+
+    print("\nAfter cleaning:")
+    print("Shape:", df.shape)
+    print(df[[CHOICE_COL, DELTA_SV_COL]].head())
+
+    if SUBJECT_COL is None:
+        orig_fit = fit_original_model(df, choice_col=CHOICE_COL, delta_sv_col=DELTA_SV_COL)
+        hist_fit = fit_history_model(df, choice_col=CHOICE_COL, delta_sv_col=DELTA_SV_COL)
+
+        summarize_model_fit("Original Model", orig_fit)
+        summarize_model_fit("History Model", hist_fit)
+        compare_two_models(orig_fit, hist_fit)
+
+        return {
+            "clean_df": df,
+            "original_fit": orig_fit,
+            "history_fit": hist_fit,
+        }
+
+    else:
+        if SUBJECT_COL not in df.columns:
+            raise ValueError(
+                f"Subject column '{SUBJECT_COL}' not found. "
+                f"Available columns: {df.columns.tolist()}"
+            )
+
+        by_subj = fit_models_by_subject(
+            df,
+            subject_col=SUBJECT_COL,
+            choice_col=CHOICE_COL,
+            delta_sv_col=DELTA_SV_COL
+        )
+
+        print("\nPer-subject results:")
+        print(by_subj.head())
+
+        # summary across participants for rows without errors
+        ok = by_subj.dropna(subset=["orig_aic", "hist_aic"], how="any").copy()
+        if len(ok) > 0:
+            print("\nAcross-subject summary:")
+            print("Mean original AIC:", round(ok["orig_aic"].mean(), 4))
+            print("Mean history  AIC:", round(ok["hist_aic"].mean(), 4))
+            print("Mean original BIC:", round(ok["orig_bic"].mean(), 4))
+            print("Mean history  BIC:", round(ok["hist_bic"].mean(), 4))
+            print("Subjects where history AIC is better:", int((ok["hist_aic"] < ok["orig_aic"]).sum()))
+            print("Subjects where history BIC is better:", int((ok["hist_bic"] < ok["orig_bic"]).sum()))
+
+        return {
+            "clean_df": df,
+            "by_subject_results": by_subj,
+        }
+
+# =========================================================
+# RUN
+# =========================================================
+
+if __name__ == "__main__":
+    outputs = run_all()
