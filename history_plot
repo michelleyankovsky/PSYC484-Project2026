@@ -1,99 +1,180 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from scipy.special import expit
+
+# =========================================================
+# CONFIG
+# =========================================================
+
+DATA_PATH = "/Users/michelleyankovsky/Desktop/Phase2_data (1).csv"
+
+CHOICE_COL = "response"      # 1 = risky, 0 = certain
+DELTA_SV_COL = "SPTdeltaSV"  # interpreted as risky - certain
+SUBJECT_COL = "PID"
+TRIAL_COL = "trial"
+
+# fitted history-model parameters from your output
+BETA0 = -0.001311
+BETA1 = -0.0145
+KAPPA = 0.055675
+THETA = -0.056063
+
+# plot settings
+X_MIN = -3
+X_MAX = 3
+N_BINS = 9
+
+# set True if you want smooth model curves behind the data
+SHOW_MODEL_CURVES = True
 
 
-CSV_FILENAME = "simulation_results_with_history.csv"
+# =========================================================
+# LOAD + PREP
+# =========================================================
 
+def load_and_prepare_data(path):
+    df = pd.read_csv(path)
 
-def plot_history_effect_bar(df: pd.DataFrame) -> None:
-    """Bar plot: P(gamble | prev certain) vs P(gamble | prev gamble)."""
+    required = [CHOICE_COL, DELTA_SV_COL, SUBJECT_COL, TRIAL_COL]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise ValueError(f"Missing required columns: {missing}")
+
     df = df.copy()
-    df = df[df["Trial"] > 1]  # first trial has no meaningful history
+    df[CHOICE_COL] = pd.to_numeric(df[CHOICE_COL], errors="coerce")
+    df[DELTA_SV_COL] = pd.to_numeric(df[DELTA_SV_COL], errors="coerce")
+    df[SUBJECT_COL] = pd.to_numeric(df[SUBJECT_COL], errors="coerce")
+    df[TRIAL_COL] = pd.to_numeric(df[TRIAL_COL], errors="coerce")
 
-    p_after_certain = df[df["History_LastAction"] == -1]["Choice"].mean()
-    p_after_gamble = df[df["History_LastAction"] == 1]["Choice"].mean()
+    df = df.dropna(subset=[CHOICE_COL, DELTA_SV_COL, SUBJECT_COL, TRIAL_COL]).copy()
+    df = df[df[CHOICE_COL].isin([0, 1])].copy()
+    df[CHOICE_COL] = df[CHOICE_COL].astype(int)
 
-    print(f"P(Gamble | Previous Certain): {p_after_certain:.3f}")
-    print(f"P(Gamble | Previous Gamble):  {p_after_gamble:.3f}")
-
-    plt.figure(figsize=(6, 5))
-    plt.bar(["Prev Certain", "Prev Gamble"], [p_after_certain, p_after_gamble])
-    plt.ylim(0, 1)
-    plt.ylabel("Probability of Gambling")
-    plt.title("History Effect: Decision based on Previous Action")
-    plt.grid(axis="y", alpha=0.3)
-    plt.show()
+    df = df.sort_values([SUBJECT_COL, TRIAL_COL]).reset_index(drop=True)
+    return df
 
 
-def plot_psychometric_by_history(df: pd.DataFrame, n_bins: int = 20) -> None:
-    """
-    Psychometric curves separated by previous action.
-    Plots binned P(gamble) as a function of Delta_SV for:
-      - After Certain (History_LastAction = -1)
-      - After Gamble  (History_LastAction =  1)
-    """
+def add_history_columns(df):
     df = df.copy()
-    df = df[df["Trial"] > 1]  # exclude first trial
+    prev_choice = df.groupby(SUBJECT_COL)[CHOICE_COL].shift(1)
 
-    # Bin by Delta_SV
-    df["Delta_bin"] = pd.cut(df["Delta_SV"], bins=n_bins)
+    df["prev_risky"] = (prev_choice == 1).astype(int)
+    df["prev_certain"] = (prev_choice == 0).astype(int)
 
-    # Mean choice per bin per history condition
-    grouped = (
-        df.groupby(["History_LastAction", "Delta_bin"], observed=True)["Choice"]
-        .mean()
-        .reset_index()
+    first_trial_mask = df.groupby(SUBJECT_COL).cumcount() == 0
+    df.loc[first_trial_mask, "prev_risky"] = 0
+    df.loc[first_trial_mask, "prev_certain"] = 0
+
+    return df
+
+
+# =========================================================
+# BINNING
+# =========================================================
+
+def binned_summary(subdf, x_col, y_col, bins):
+    subdf = subdf.copy()
+    subdf["bin"] = pd.cut(subdf[x_col], bins=bins, include_lowest=True, labels=False)
+
+    centers = 0.5 * (bins[:-1] + bins[1:])
+    means = np.full(len(centers), np.nan)
+    sems = np.full(len(centers), np.nan)
+
+    for b, g in subdf.groupby("bin"):
+        if pd.isna(b):
+            continue
+        b = int(b)
+        vals = g[y_col].to_numpy()
+        if len(vals) == 0:
+            continue
+
+        means[b] = np.mean(vals)
+        sems[b] = np.std(vals, ddof=1) / np.sqrt(len(vals)) if len(vals) > 1 else 0.0
+
+    return centers, means, sems
+
+
+# =========================================================
+# PLOT
+# =========================================================
+
+def plot_history_curves(df):
+    # exclude first trial per subject because no real history there
+    first_trial_mask = df.groupby(SUBJECT_COL).cumcount() == 0
+    plot_df = df.loc[~first_trial_mask].copy()
+
+    # restrict x-range so it looks like a psychometric plot
+    plot_df = plot_df[
+        (plot_df[DELTA_SV_COL] >= X_MIN) &
+        (plot_df[DELTA_SV_COL] <= X_MAX)
+    ].copy()
+
+    bins = np.linspace(X_MIN, X_MAX, N_BINS + 1)
+    x_grid = np.linspace(X_MIN, X_MAX, 400)
+
+    # empirical summaries
+    centers_r, means_r, sems_r = binned_summary(
+        plot_df[plot_df["prev_risky"] == 1],
+        DELTA_SV_COL,
+        CHOICE_COL,
+        bins
     )
 
-    # Bin centers (mean Delta_SV within each bin, computed across all trials)
-    delta_means = df.groupby("Delta_bin", observed=True)["Delta_SV"].mean()
-
-    # Reindex to ensure both history series align with delta_means bins
-    idx = delta_means.index
-    after_certain = (
-        grouped[grouped["History_LastAction"] == -1]
-        .set_index("Delta_bin")
-        .reindex(idx)["Choice"]
-    )
-    after_gamble = (
-        grouped[grouped["History_LastAction"] == 1]
-        .set_index("Delta_bin")
-        .reindex(idx)["Choice"]
+    centers_c, means_c, sems_c = binned_summary(
+        plot_df[plot_df["prev_certain"] == 1],
+        DELTA_SV_COL,
+        CHOICE_COL,
+        bins
     )
 
-    # Plot
-    plt.figure(figsize=(7, 6))
-    plt.plot(delta_means.values, after_certain.values, marker="o", label="After Certain")
-    plt.plot(delta_means.values, after_gamble.values, marker="o", label="After Gamble")
+    plt.figure(figsize=(9, 6))
 
-    plt.xlabel("ΔSV (binned mean)")
-    plt.ylabel("P(Gamble)")
-    plt.title("Psychometric Curves by Previous Action (History)")
-    plt.ylim(0, 1)
-    plt.grid(alpha=0.3)
+    # smooth model curves
+    if SHOW_MODEL_CURVES:
+        p_prev_risky = expit(BETA0 + BETA1 * x_grid + KAPPA)
+        p_prev_certain = expit(BETA0 + BETA1 * x_grid + THETA)
+
+        plt.plot(
+            x_grid, p_prev_risky,
+            linestyle="--", linewidth=2, alpha=0.8,
+            label="Model: previous risky"
+        )
+        plt.plot(
+            x_grid, p_prev_certain,
+            linestyle="--", linewidth=2, alpha=0.8,
+            label="Model: previous certain"
+        )
+
+    # empirical curves with error bars
+    plt.errorbar(
+        centers_r, means_r, yerr=sems_r,
+        fmt="o-", capsize=4, linewidth=2, markersize=5,
+        label="P(Risky | previous risky)"
+    )
+
+    plt.errorbar(
+        centers_c, means_c, yerr=sems_c,
+        fmt="o-", capsize=4, linewidth=2, markersize=5,
+        label="P(Risky | previous certain)"
+    )
+
+    plt.axvline(0, color="gray", linestyle="--", linewidth=1)
+
+    plt.xlim(X_MIN, X_MAX)
+    plt.ylim(-0.05, 1.05)
+    plt.xlabel("Value (Risky - Certain)")
+    plt.ylabel("P(Choose Risky)")
+    plt.title("P(Choose Risky) as a function of Value")
     plt.legend()
+    plt.tight_layout()
     plt.show()
 
 
 def main():
-    # Load CSV (same folder as this script)
-    df = pd.read_csv(CSV_FILENAME)
-
-    # Basic checks
-    needed = {"Trial", "Delta_SV", "History_LastAction", "Choice"}
-    missing = needed - set(df.columns)
-    if missing:
-        raise ValueError(
-            f"CSV is missing required columns: {missing}\n"
-            f"Found columns: {list(df.columns)}"
-        )
-
-    # Optional: if you ran 100 simulations, you can filter one simulation:
-    # df = df[df["Simulation"] == 1].copy()
-
-    plot_history_effect_bar(df)
-    plot_psychometric_by_history(df, n_bins=20)
+    df = load_and_prepare_data(DATA_PATH)
+    df = add_history_columns(df)
+    plot_history_curves(df)
 
 
 if __name__ == "__main__":
