@@ -1,0 +1,190 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# =========================================================
+# CONFIG
+# =========================================================
+
+DATA_PATH = "/Users/michelleyankovsky/Desktop/Phase2_data (1).csv"
+
+RESPONSE_COL = "response"     # 0 = chose left, 1 = chose right
+PROBL_COL = "probL"
+PROBR_COL = "probR"
+PGAMBLE_COL = "P_Gamble"
+AGAMBLE_COL = "A_Gamble"
+ACERTAIN_COL = "A_Certain"
+SUBJECT_COL = "PID"
+TRIAL_COL = "trial"
+
+N_BINS = 10
+X_MIN = -1.0
+X_MAX = 1.5
+
+# =========================================================
+# LOAD
+# =========================================================
+
+df = pd.read_csv(DATA_PATH)
+
+needed = [
+    RESPONSE_COL, PROBL_COL, PROBR_COL,
+    PGAMBLE_COL, AGAMBLE_COL, ACERTAIN_COL,
+    SUBJECT_COL, TRIAL_COL
+]
+missing = [c for c in needed if c not in df.columns]
+if missing:
+    raise ValueError(f"Missing columns: {missing}")
+
+for col in needed:
+    df[col] = pd.to_numeric(df[col], errors="coerce")
+
+df = df.dropna(subset=needed).copy()
+df = df.sort_values([SUBJECT_COL, TRIAL_COL]).reset_index(drop=True)
+
+# =========================================================
+# CURRENT-TRIAL GAMBLE CHOICE
+# =========================================================
+
+df["choose_left"] = (df[RESPONSE_COL] == 0).astype(int)
+df["choose_right"] = (df[RESPONSE_COL] == 1).astype(int)
+
+df["left_is_risky"] = df[PROBL_COL] < 1.0
+df["right_is_risky"] = df[PROBR_COL] < 1.0
+
+df["choose_gamble"] = np.where(
+    (df["left_is_risky"] & (df["choose_left"] == 1)) |
+    (df["right_is_risky"] & (df["choose_right"] == 1)),
+    1, 0
+).astype(int)
+
+# current trial gamble probability
+df["p_gamble_trial"] = df[PGAMBLE_COL]
+
+# =========================================================
+# EXPECTED VALUE DIFFERENCE
+# =========================================================
+
+df["EV_gamble"] = df[PGAMBLE_COL] * df[AGAMBLE_COL]
+df["EV_certain"] = df[ACERTAIN_COL]
+df["DELTA_EV"] = df["EV_gamble"] - df["EV_certain"]
+
+# =========================================================
+# HISTORY VARIABLES
+# =========================================================
+
+prev_gamble_choice = df.groupby(SUBJECT_COL)["choose_gamble"].shift(1)
+
+df["prev_gamble"] = (prev_gamble_choice == 1).astype(int)
+df["prev_certain"] = (prev_gamble_choice == 0).astype(int)
+
+# remove first trial per subject
+first_trial_mask = df.groupby(SUBJECT_COL).cumcount() == 0
+df = df.loc[~first_trial_mask].copy()
+
+# restrict x-range for clean psychometric shape
+df = df[(df["DELTA_EV"] >= X_MIN) & (df["DELTA_EV"] <= X_MAX)].copy()
+
+# =========================================================
+# BINNED SUMMARY
+# =========================================================
+
+def binned_summary(subdf, x_col, y_col, bins):
+    subdf = subdf.copy()
+    subdf["bin"] = pd.cut(subdf[x_col], bins=bins, include_lowest=True, labels=False)
+
+    centers = 0.5 * (bins[:-1] + bins[1:])
+    means = np.full(len(centers), np.nan)
+    sems = np.full(len(centers), np.nan)
+
+    for b, g in subdf.groupby("bin"):
+        if pd.isna(b):
+            continue
+        b = int(b)
+        vals = g[y_col].to_numpy()
+        if len(vals) == 0:
+            continue
+        means[b] = np.mean(vals)
+        sems[b] = np.std(vals, ddof=1) / np.sqrt(len(vals)) if len(vals) > 1 else 0.0
+
+    return centers, means, sems
+
+# =========================================================
+# CONDITIONS
+# =========================================================
+
+cond_pg_05 = (df["prev_gamble"] == 1) & np.isclose(df["p_gamble_trial"], 0.5)
+cond_pg_09 = (df["prev_gamble"] == 1) & np.isclose(df["p_gamble_trial"], 0.9)
+cond_pc_05 = (df["prev_certain"] == 1) & np.isclose(df["p_gamble_trial"], 0.5)
+cond_pc_09 = (df["prev_certain"] == 1) & np.isclose(df["p_gamble_trial"], 0.9)
+
+# =========================================================
+# MAKE CURVES
+# =========================================================
+
+bins = np.linspace(X_MIN, X_MAX, N_BINS + 1)
+
+x_all, y_all, e_all = binned_summary(df, "DELTA_EV", "choose_gamble", bins)
+
+x_pg05, y_pg05, e_pg05 = binned_summary(df[cond_pg_05], "DELTA_EV", "choose_gamble", bins)
+x_pg09, y_pg09, e_pg09 = binned_summary(df[cond_pg_09], "DELTA_EV", "choose_gamble", bins)
+x_pc05, y_pc05, e_pc05 = binned_summary(df[cond_pc_05], "DELTA_EV", "choose_gamble", bins)
+x_pc09, y_pc09, e_pc09 = binned_summary(df[cond_pc_09], "DELTA_EV", "choose_gamble", bins)
+
+# =========================================================
+# PLOT
+# =========================================================
+
+plt.figure(figsize=(10, 6))
+
+plt.errorbar(
+    x_all, y_all, yerr=e_all,
+    fmt="o-", color="black", linewidth=2, markersize=5, capsize=4,
+    label="P(Choose Gamble)"
+)
+
+plt.errorbar(
+    x_pc05, y_pc05, yerr=e_pc05,
+    fmt="o--", linewidth=2, markersize=5, capsize=4,
+    label="P(Gamble | previous certain, p=0.5)"
+)
+
+plt.errorbar(
+    x_pc09, y_pc09, yerr=e_pc09,
+    fmt="o--", linewidth=2, markersize=5, capsize=4,
+    label="P(Gamble | previous certain, p=0.9)"
+)
+
+plt.errorbar(
+    x_pg05, y_pg05, yerr=e_pg05,
+    fmt="o--", linewidth=2, markersize=5, capsize=4,
+    label="P(Gamble | previous gamble, p=0.5)"
+)
+
+plt.errorbar(
+    x_pg09, y_pg09, yerr=e_pg09,
+    fmt="o--", linewidth=2, markersize=5, capsize=4,
+    label="P(Gamble | previous gamble, p=0.9)"
+)
+
+plt.axhline(0.5, linestyle="--", color="gray", alpha=0.7)
+plt.axvline(0, linestyle="--", color="gray", alpha=0.7)
+
+plt.xlim(X_MIN, X_MAX)
+plt.ylim(-0.05, 1.05)
+plt.xlabel("Difference in Expected Value (Risky - Certain)")
+plt.ylabel("P(Choose Gamble)")
+plt.title("History effect on risky choice by gamble probability")
+plt.legend()
+plt.tight_layout()
+plt.show()
+
+# =========================================================
+# DEBUG COUNTS
+# =========================================================
+
+print("Total trials used:", len(df))
+print("Prev gamble,  p=0.5:", cond_pg_05.sum())
+print("Prev gamble,  p=0.9:", cond_pg_09.sum())
+print("Prev certain, p=0.5:", cond_pc_05.sum())
+print("Prev certain, p=0.9:", cond_pc_09.sum())
