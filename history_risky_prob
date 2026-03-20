@@ -1,0 +1,185 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# =========================================================
+# CONFIG
+# =========================================================
+
+DATA_PATH = "/Users/michelleyankovsky/Desktop/Phase2_data (1).csv"
+
+RESPONSE_COL = "response"     # 0 = chose left, 1 = chose right
+PROBL_COL = "probL"
+PROBR_COL = "probR"
+DELTA_SV_COL = "SPTdeltaSV"   # risky - certain
+SUBJECT_COL = "PID"
+TRIAL_COL = "trial"
+
+N_BINS = 10
+X_MIN = -0.8
+X_MAX = 1.3
+
+# =========================================================
+# LOAD
+# =========================================================
+
+df = pd.read_csv(DATA_PATH)
+
+needed = [RESPONSE_COL, PROBL_COL, PROBR_COL, DELTA_SV_COL, SUBJECT_COL, TRIAL_COL]
+missing = [c for c in needed if c not in df.columns]
+if missing:
+    raise ValueError(f"Missing columns: {missing}")
+
+for col in needed:
+    df[col] = pd.to_numeric(df[col], errors="coerce")
+
+df = df.dropna(subset=needed).copy()
+df = df.sort_values([SUBJECT_COL, TRIAL_COL]).reset_index(drop=True)
+
+# =========================================================
+# DEFINE CURRENT TRIAL GAMBLE CHOICE
+# =========================================================
+
+# side chosen
+df["choose_left"] = (df[RESPONSE_COL] == 0).astype(int)
+df["choose_right"] = (df[RESPONSE_COL] == 1).astype(int)
+
+# which side is risky on this trial
+df["left_is_risky"] = df[PROBL_COL] < 1.0
+df["right_is_risky"] = df[PROBR_COL] < 1.0
+
+# current gamble probability (0.5 or 0.9)
+df["p_gamble_trial"] = np.where(df["left_is_risky"], df[PROBL_COL], df[PROBR_COL])
+
+# did they choose the gamble on the current trial?
+df["choose_gamble"] = np.where(
+    (df["left_is_risky"] & (df["choose_left"] == 1)) |
+    (df["right_is_risky"] & (df["choose_right"] == 1)),
+    1, 0
+).astype(int)
+
+# =========================================================
+# DEFINE PREVIOUS TRIAL HISTORY
+# =========================================================
+
+# previous choice: gamble or not
+df["prev_choose_gamble"] = df.groupby(SUBJECT_COL)["choose_gamble"].shift(1)
+
+# previous gamble probability, but only meaningful if previous choice was gamble
+df["prev_p_gamble"] = df.groupby(SUBJECT_COL)["p_gamble_trial"].shift(1)
+
+# remove first trial per participant
+first_trial_mask = df.groupby(SUBJECT_COL).cumcount() == 0
+df = df.loc[~first_trial_mask].copy()
+
+# keep only trials where PREVIOUS choice was a gamble
+df = df[df["prev_choose_gamble"] == 1].copy()
+
+# restrict x-range for cleaner psychometric shape
+df = df[(df[DELTA_SV_COL] >= X_MIN) & (df[DELTA_SV_COL] <= X_MAX)].copy()
+
+# =========================================================
+# BINNED SUMMARY
+# =========================================================
+
+def binned_summary(subdf, x_col, y_col, bins):
+    subdf = subdf.copy()
+    subdf["bin"] = pd.cut(subdf[x_col], bins=bins, include_lowest=True, labels=False)
+
+    centers = 0.5 * (bins[:-1] + bins[1:])
+    means = np.full(len(centers), np.nan)
+    sems = np.full(len(centers), np.nan)
+
+    for b, g in subdf.groupby("bin"):
+        if pd.isna(b):
+            continue
+        b = int(b)
+        vals = g[y_col].to_numpy()
+        if len(vals) == 0:
+            continue
+
+        means[b] = np.mean(vals)
+        sems[b] = np.std(vals, ddof=1) / np.sqrt(len(vals)) if len(vals) > 1 else 0.0
+
+    return centers, means, sems
+
+# =========================================================
+# CONDITIONS: previous gamble p | current gamble p
+# =========================================================
+
+cond_05_05 = np.isclose(df["prev_p_gamble"], 0.5) & np.isclose(df["p_gamble_trial"], 0.5)
+cond_05_09 = np.isclose(df["prev_p_gamble"], 0.5) & np.isclose(df["p_gamble_trial"], 0.9)
+cond_09_05 = np.isclose(df["prev_p_gamble"], 0.9) & np.isclose(df["p_gamble_trial"], 0.5)
+cond_09_09 = np.isclose(df["prev_p_gamble"], 0.9) & np.isclose(df["p_gamble_trial"], 0.9)
+
+# =========================================================
+# MAKE CURVES
+# =========================================================
+
+bins = np.linspace(X_MIN, X_MAX, N_BINS + 1)
+
+x_0505, y_0505, e_0505 = binned_summary(df[cond_05_05], DELTA_SV_COL, "choose_gamble", bins)
+x_0509, y_0509, e_0509 = binned_summary(df[cond_05_09], DELTA_SV_COL, "choose_gamble", bins)
+x_0905, y_0905, e_0905 = binned_summary(df[cond_09_05], DELTA_SV_COL, "choose_gamble", bins)
+x_0909, y_0909, e_0909 = binned_summary(df[cond_09_09], DELTA_SV_COL, "choose_gamble", bins)
+
+# optional overall line restricted to previous-gamble trials only
+x_all, y_all, e_all = binned_summary(df, DELTA_SV_COL, "choose_gamble", bins)
+
+# =========================================================
+# PLOT
+# =========================================================
+
+plt.figure(figsize=(10, 6))
+
+plt.errorbar(
+    x_all, y_all, yerr=e_all,
+    fmt="o-", color="black", linewidth=2, markersize=5, capsize=4,
+    label="P(Choose Gamble | previous gamble)"
+)
+
+plt.errorbar(
+    x_0505, y_0505, yerr=e_0505,
+    fmt="o--", linewidth=2, markersize=5, capsize=4,
+    label="0.5 | 0.5"
+)
+
+plt.errorbar(
+    x_0509, y_0509, yerr=e_0509,
+    fmt="o--", linewidth=2, markersize=5, capsize=4,
+    label="0.5 | 0.9"
+)
+
+plt.errorbar(
+    x_0905, y_0905, yerr=e_0905,
+    fmt="o--", linewidth=2, markersize=5, capsize=4,
+    label="0.9 | 0.5"
+)
+
+plt.errorbar(
+    x_0909, y_0909, yerr=e_0909,
+    fmt="o--", linewidth=2, markersize=5, capsize=4,
+    label="0.9 | 0.9"
+)
+
+plt.axhline(0.5, linestyle="--", color="gray", alpha=0.7)
+plt.axvline(0, linestyle="--", color="gray", alpha=0.7)
+
+plt.xlim(X_MIN, X_MAX)
+plt.ylim(-0.05, 1.05)
+plt.xlabel("Difference in Subjective Value (Risky - Certain)")
+plt.ylabel("P(Choose Gamble)")
+plt.title("Risky-choice history by previous and current gamble probability")
+plt.legend(title="Previous | Current")
+plt.tight_layout()
+plt.show()
+
+# =========================================================
+# DEBUG COUNTS
+# =========================================================
+
+print("Total previous-gamble trials used:", len(df))
+print("0.5 | 0.5:", cond_05_05.sum())
+print("0.5 | 0.9:", cond_05_09.sum())
+print("0.9 | 0.5:", cond_09_05.sum())
+print("0.9 | 0.9:", cond_09_09.sum())
