@@ -1,0 +1,183 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# =========================================================
+# CONFIG
+# =========================================================
+
+DATA_PATH = "/Users/michelleyankovsky/Desktop/Phase2_data (1).csv"
+
+RESPONSE_COL = "response"     # 0 = chose left, 1 = chose right
+PROBL_COL = "probL"
+PROBR_COL = "probR"
+STIML_COL = "stimL"
+STIMR_COL = "stimR"
+SUBJECT_COL = "PID"
+TRIAL_COL = "trial"
+
+N_BINS = 10
+X_MIN = -1.5
+X_MAX = 3
+
+# =========================================================
+# LOAD
+# =========================================================
+
+df = pd.read_csv(DATA_PATH)
+
+needed = [
+    RESPONSE_COL, PROBL_COL, PROBR_COL,
+    STIML_COL, STIMR_COL, SUBJECT_COL, TRIAL_COL
+]
+missing = [c for c in needed if c not in df.columns]
+if missing:
+    raise ValueError(f"Missing columns: {missing}")
+
+for col in needed:
+    df[col] = pd.to_numeric(df[col], errors="coerce")
+
+df = df.dropna(subset=needed).copy()
+df = df.sort_values([SUBJECT_COL, TRIAL_COL]).reset_index(drop=True)
+
+# =========================================================
+# DEFINE CURRENT TRIAL CHOICE
+# =========================================================
+
+df["choose_left"] = (df[RESPONSE_COL] == 0).astype(int)
+df["choose_right"] = (df[RESPONSE_COL] == 1).astype(int)
+
+# which side is risky?
+df["left_is_risky"] = df[PROBL_COL] < 1.0
+df["right_is_risky"] = df[PROBR_COL] < 1.0
+
+# current gamble probability
+df["p_gamble_trial"] = np.where(df["left_is_risky"], df[PROBL_COL], df[PROBR_COL])
+
+# choose gamble?
+df["choose_gamble"] = np.where(
+    (df["left_is_risky"] & (df["choose_left"] == 1)) |
+    (df["right_is_risky"] & (df["choose_right"] == 1)),
+    1, 0
+).astype(int)
+
+# =========================================================
+# EXPECTED VALUE DIFFERENCE: risky - certain
+# =========================================================
+
+df["risky_ev"] = np.where(
+    df["left_is_risky"],
+    df[STIML_COL] * df[PROBL_COL],
+    df[STIMR_COL] * df[PROBR_COL]
+)
+
+df["certain_ev"] = np.where(
+    df["left_is_risky"],
+    df[STIMR_COL] * df[PROBR_COL],   # should be prob 1.0
+    df[STIML_COL] * df[PROBL_COL]    # should be prob 1.0
+)
+
+df["ev_diff"] = df["risky_ev"] - df["certain_ev"]
+
+# =========================================================
+# DEFINE PREVIOUS TRIAL HISTORY
+# =========================================================
+
+df["prev_choose_gamble"] = df.groupby(SUBJECT_COL)["choose_gamble"].shift(1)
+
+# remove first trial per subject
+first_trial_mask = df.groupby(SUBJECT_COL).cumcount() == 0
+df = df.loc[~first_trial_mask].copy()
+
+# keep only trials where previous choice was certain
+df = df[df["prev_choose_gamble"] == 0].copy()
+
+# restrict x-range
+df = df[(df["ev_diff"] >= X_MIN) & (df["ev_diff"] <= X_MAX)].copy()
+
+# =========================================================
+# BINNED SUMMARY
+# =========================================================
+
+def binned_summary(subdf, x_col, y_col, bins):
+    subdf = subdf.copy()
+    subdf["bin"] = pd.cut(subdf[x_col], bins=bins, include_lowest=True, labels=False)
+
+    centers = 0.5 * (bins[:-1] + bins[1:])
+    means = np.full(len(centers), np.nan)
+    sems = np.full(len(centers), np.nan)
+
+    for b, g in subdf.groupby("bin"):
+        if pd.isna(b):
+            continue
+        b = int(b)
+        vals = g[y_col].to_numpy()
+        if len(vals) == 0:
+            continue
+
+        means[b] = np.mean(vals)
+        sems[b] = np.std(vals, ddof=1) / np.sqrt(len(vals)) if len(vals) > 1 else 0.0
+
+    return centers, means, sems
+
+# =========================================================
+# CONDITIONS: previous certain 1.0 | current gamble p
+# =========================================================
+
+cond_10_05 = np.isclose(df["p_gamble_trial"], 0.5)
+cond_10_09 = np.isclose(df["p_gamble_trial"], 0.9)
+
+# =========================================================
+# MAKE CURVES
+# =========================================================
+
+bins = np.linspace(X_MIN, X_MAX, N_BINS + 1)
+
+x_1005, y_1005, e_1005 = binned_summary(df[cond_10_05], "ev_diff", "choose_gamble", bins)
+x_1009, y_1009, e_1009 = binned_summary(df[cond_10_09], "ev_diff", "choose_gamble", bins)
+
+x_all, y_all, e_all = binned_summary(df, "ev_diff", "choose_gamble", bins)
+
+# =========================================================
+# PLOT
+# =========================================================
+
+plt.figure(figsize=(10, 6))
+
+plt.errorbar(
+    x_all, y_all, yerr=e_all,
+    fmt="o-", color="black", linewidth=2, markersize=5, capsize=4,
+    label="P(Choose Gamble | previous certain)"
+)
+
+plt.errorbar(
+    x_1005, y_1005, yerr=e_1005,
+    fmt="o--", linewidth=2, markersize=5, capsize=4,
+    label="1.0 | 0.5"
+)
+
+plt.errorbar(
+    x_1009, y_1009, yerr=e_1009,
+    fmt="o--", linewidth=2, markersize=5, capsize=4,
+    label="1.0 | 0.9"
+)
+
+plt.axhline(0.5, linestyle="--", color="gray", alpha=0.7)
+plt.axvline(0, linestyle="--", color="gray", alpha=0.7)
+
+plt.xlim(X_MIN, X_MAX)
+plt.ylim(-0.05, 1.05)
+plt.xlabel("Expected Value Difference (Risky - Certain)")
+plt.ylabel("P(Choose Gamble)")
+plt.title("Risky choice after previous certain option")
+plt.legend(title="Previous | Current")
+plt.tight_layout()
+plt.show()
+
+# =========================================================
+# DEBUG
+# =========================================================
+
+print("Total previous-certain trials used:", len(df))
+print("1.0 | 0.5:", cond_10_05.sum())
+print("1.0 | 0.9:", cond_10_09.sum())
