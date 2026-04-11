@@ -2,9 +2,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-# =========================================================
 # CONFIG
-# =========================================================
 
 DATA_PATH = "/Users/michelleyankovsky/Desktop/Phase2_data (1).csv"
 
@@ -19,9 +17,7 @@ N_BINS = 10
 X_MIN = -0.8
 X_MAX = 1.3
 
-# =========================================================
 # LOAD
-# =========================================================
 
 df = pd.read_csv(DATA_PATH)
 
@@ -36,9 +32,7 @@ for col in needed:
 df = df.dropna(subset=needed).copy()
 df = df.sort_values([SUBJECT_COL, TRIAL_COL]).reset_index(drop=True)
 
-# =========================================================
 # DEFINE CURRENT TRIAL GAMBLE CHOICE
-# =========================================================
 
 # side chosen
 df["choose_left"] = (df[RESPONSE_COL] == 0).astype(int)
@@ -58,9 +52,7 @@ df["choose_gamble"] = np.where(
     1, 0
 ).astype(int)
 
-# =========================================================
 # DEFINE PREVIOUS TRIAL HISTORY
-# =========================================================
 
 # previous choice: gamble or not
 df["prev_choose_gamble"] = df.groupby(SUBJECT_COL)["choose_gamble"].shift(1)
@@ -78,9 +70,7 @@ df = df[df["prev_choose_gamble"] == 1].copy()
 # restrict x-range for cleaner psychometric shape
 df = df[(df[DELTA_SV_COL] >= X_MIN) & (df[DELTA_SV_COL] <= X_MAX)].copy()
 
-# =========================================================
 # BINNED SUMMARY
-# =========================================================
 
 def binned_summary(subdf, x_col, y_col, bins):
     subdf = subdf.copy()
@@ -103,18 +93,14 @@ def binned_summary(subdf, x_col, y_col, bins):
 
     return centers, means, sems
 
-# =========================================================
 # CONDITIONS: previous gamble p | current gamble p
-# =========================================================
 
 cond_05_05 = np.isclose(df["prev_p_gamble"], 0.5) & np.isclose(df["p_gamble_trial"], 0.5)
 cond_05_09 = np.isclose(df["prev_p_gamble"], 0.5) & np.isclose(df["p_gamble_trial"], 0.9)
 cond_09_05 = np.isclose(df["prev_p_gamble"], 0.9) & np.isclose(df["p_gamble_trial"], 0.5)
 cond_09_09 = np.isclose(df["prev_p_gamble"], 0.9) & np.isclose(df["p_gamble_trial"], 0.9)
 
-# =========================================================
 # MAKE CURVES
-# =========================================================
 
 bins = np.linspace(X_MIN, X_MAX, N_BINS + 1)
 
@@ -126,9 +112,7 @@ x_0909, y_0909, e_0909 = binned_summary(df[cond_09_09], DELTA_SV_COL, "choose_ga
 # optional overall line restricted to previous-gamble trials only
 x_all, y_all, e_all = binned_summary(df, DELTA_SV_COL, "choose_gamble", bins)
 
-# =========================================================
 # PLOT
-# =========================================================
 
 plt.figure(figsize=(10, 6))
 
@@ -173,10 +157,6 @@ plt.title("Risky-choice history by previous and current gamble probability")
 plt.legend(title="Previous | Current")
 plt.tight_layout()
 plt.show()
-
-# =========================================================
-# DEBUG COUNTS
-# =========================================================
 
 print("Total previous-gamble trials used:", len(df))
 print("0.5 | 0.5:", cond_05_05.sum())
