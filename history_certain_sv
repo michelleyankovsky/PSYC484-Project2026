@@ -2,9 +2,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-# =========================================================
 # CONFIG
-# =========================================================
 
 DATA_PATH = "/Users/michelleyankovsky/Desktop/Phase2_data (1).csv"
 
@@ -20,9 +18,7 @@ N_BINS = 10
 X_MIN = -1.5
 X_MAX = 3
 
-# =========================================================
 # LOAD
-# =========================================================
 
 df = pd.read_csv(DATA_PATH)
 
@@ -40,9 +36,7 @@ for col in needed:
 df = df.dropna(subset=needed).copy()
 df = df.sort_values([SUBJECT_COL, TRIAL_COL]).reset_index(drop=True)
 
-# =========================================================
 # DEFINE CURRENT TRIAL CHOICE
-# =========================================================
 
 df["choose_left"] = (df[RESPONSE_COL] == 0).astype(int)
 df["choose_right"] = (df[RESPONSE_COL] == 1).astype(int)
@@ -61,9 +55,7 @@ df["choose_gamble"] = np.where(
     1, 0
 ).astype(int)
 
-# =========================================================
 # EXPECTED VALUE DIFFERENCE: risky - certain
-# =========================================================
 
 df["risky_ev"] = np.where(
     df["left_is_risky"],
@@ -79,9 +71,7 @@ df["certain_ev"] = np.where(
 
 df["ev_diff"] = df["risky_ev"] - df["certain_ev"]
 
-# =========================================================
 # DEFINE PREVIOUS TRIAL HISTORY
-# =========================================================
 
 df["prev_choose_gamble"] = df.groupby(SUBJECT_COL)["choose_gamble"].shift(1)
 
@@ -95,9 +85,7 @@ df = df[df["prev_choose_gamble"] == 0].copy()
 # restrict x-range
 df = df[(df["ev_diff"] >= X_MIN) & (df["ev_diff"] <= X_MAX)].copy()
 
-# =========================================================
 # BINNED SUMMARY
-# =========================================================
 
 def binned_summary(subdf, x_col, y_col, bins):
     subdf = subdf.copy()
@@ -120,16 +108,12 @@ def binned_summary(subdf, x_col, y_col, bins):
 
     return centers, means, sems
 
-# =========================================================
 # CONDITIONS: previous certain 1.0 | current gamble p
-# =========================================================
 
 cond_10_05 = np.isclose(df["p_gamble_trial"], 0.5)
 cond_10_09 = np.isclose(df["p_gamble_trial"], 0.9)
 
-# =========================================================
 # MAKE CURVES
-# =========================================================
 
 bins = np.linspace(X_MIN, X_MAX, N_BINS + 1)
 
@@ -138,9 +122,7 @@ x_1009, y_1009, e_1009 = binned_summary(df[cond_10_09], "ev_diff", "choose_gambl
 
 x_all, y_all, e_all = binned_summary(df, "ev_diff", "choose_gamble", bins)
 
-# =========================================================
 # PLOT
-# =========================================================
 
 plt.figure(figsize=(10, 6))
 
@@ -173,10 +155,6 @@ plt.title("Risky choice after previous certain option")
 plt.legend(title="Previous | Current")
 plt.tight_layout()
 plt.show()
-
-# =========================================================
-# DEBUG
-# =========================================================
 
 print("Total previous-certain trials used:", len(df))
 print("1.0 | 0.5:", cond_10_05.sum())
