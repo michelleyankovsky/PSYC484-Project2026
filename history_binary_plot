@@ -2,10 +2,6 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-# =========================================================
-# CONFIG
-# =========================================================
-
 DATA_PATH = "/Users/michelleyankovsky/Desktop/Phase2_data (1).csv"
 
 RESPONSE_COL = "response"     # 0 = chose left, 1 = chose right
@@ -19,10 +15,6 @@ N_BINS = 10
 X_MIN = -0.8
 X_MAX = 1.3
 
-# =========================================================
-# LOAD
-# =========================================================
-
 df = pd.read_csv(DATA_PATH)
 
 needed = [RESPONSE_COL, PROBL_COL, PROBR_COL, DELTA_SV_COL, SUBJECT_COL, TRIAL_COL]
@@ -35,10 +27,6 @@ for col in needed:
 
 df = df.dropna(subset=needed).copy()
 df = df.sort_values([SUBJECT_COL, TRIAL_COL]).reset_index(drop=True)
-
-# =========================================================
-# CURRENT-TRIAL GAMBLE CHOICE
-# =========================================================
 
 # Which side did they choose?
 df["choose_left"] = (df[RESPONSE_COL] == 0).astype(int)
@@ -55,10 +43,6 @@ df["choose_gamble"] = np.where(
     1, 0
 ).astype(int)
 
-# =========================================================
-# HISTORY VARIABLES
-# =========================================================
-
 prev_gamble_choice = df.groupby(SUBJECT_COL)["choose_gamble"].shift(1)
 
 df["prev_gamble"] = (prev_gamble_choice == 1).astype(int)
@@ -70,10 +54,6 @@ df = df.loc[~first_trial_mask].copy()
 
 # restrict x-axis range for cleaner psychometric shape
 df = df[(df[DELTA_SV_COL] >= X_MIN) & (df[DELTA_SV_COL] <= X_MAX)].copy()
-
-# =========================================================
-# BINNED SUMMARY
-# =========================================================
 
 def binned_summary(subdf, x_col, y_col, bins):
     subdf = subdf.copy()
@@ -95,10 +75,6 @@ def binned_summary(subdf, x_col, y_col, bins):
 
     return centers, means, sems
 
-# =========================================================
-# MAKE CURVES
-# =========================================================
-
 bins = np.linspace(X_MIN, X_MAX, N_BINS + 1)
 
 x_all, y_all, e_all = binned_summary(df, DELTA_SV_COL, "choose_gamble", bins)
@@ -117,9 +93,6 @@ x_pc, y_pc, e_pc = binned_summary(
     bins
 )
 
-# =========================================================
-# PLOT
-# =========================================================
 
 plt.figure(figsize=(9, 6))
 
@@ -153,9 +126,6 @@ plt.legend()
 plt.tight_layout()
 plt.show()
 
-# =========================================================
-# DEBUG
-# =========================================================
 
 print("Total trials used:", len(df))
 print("Trials after previous gamble:", (df['prev_gamble'] == 1).sum())
