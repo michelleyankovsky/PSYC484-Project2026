@@ -3,9 +3,7 @@ import pandas as pd
 from scipy.optimize import minimize
 from scipy.special import expit
 
-# =========================================================
 # CONFIG
-# =========================================================
 
 DATA_PATH = "/Users/michelleyankovsky/Desktop/Phase2_data (1).csv"
 
@@ -22,9 +20,7 @@ SUBJECT_COL = None             # example: "participant"
 METHOD = "L-BFGS-B"
 CLIP_EPS = 1e-10
 
-# =========================================================
 # DATA LOADING
-# =========================================================
 
 def load_data(path):
     df = pd.read_csv(path)
@@ -33,10 +29,6 @@ def load_data(path):
     print("Columns:", df.columns.tolist())
     print(df.head())
     return df
-
-# =========================================================
-# HELPERS
-# =========================================================
 
 def standardize_choice_column(df, choice_col):
     """
@@ -156,9 +148,7 @@ def clean_model_data(df, choice_col, delta_sv_col, subject_col=None):
 
     return out
 
-# =========================================================
 # NEGATIVE LOG-LIKELIHOOD FUNCTIONS
-# =========================================================
 
 def neg_ll_original(params, df, choice_col="choice", delta_sv_col="delta_sv"):
     """
@@ -199,9 +189,7 @@ def neg_ll_history(params, df, choice_col="choice", delta_sv_col="delta_sv"):
     ll = np.sum(y * np.log(p) + (1 - y) * np.log(1 - p))
     return -ll
 
-# =========================================================
 # FITTING FUNCTIONS
-# =========================================================
 
 def fit_original_model(df, choice_col="choice", delta_sv_col="delta_sv"):
     x0 = np.array([0.0, 1.0], dtype=float)
@@ -251,9 +239,7 @@ def fit_history_model(df, choice_col="choice", delta_sv_col="delta_sv"):
         "df_with_history": df_hist,
     }
 
-# =========================================================
 # MODEL COMPARISON
-# =========================================================
 
 def compute_aic(nll, k):
     return 2 * k + 2 * nll
@@ -306,9 +292,7 @@ def compare_two_models(orig_fit, hist_fit):
     else:
         print("BIC prefers the original model.")
 
-# =========================================================
 # OPTIONAL: FIT BY SUBJECT
-# =========================================================
 
 def fit_models_by_subject(df, subject_col, choice_col="choice", delta_sv_col="delta_sv"):
     results = []
@@ -354,9 +338,7 @@ def fit_models_by_subject(df, subject_col, choice_col="choice", delta_sv_col="de
 
     return pd.DataFrame(results)
 
-# =========================================================
 # MAIN PIPELINE
-# =========================================================
 
 def run_all():
     df = load_data(DATA_PATH)
@@ -432,9 +414,7 @@ def run_all():
             "by_subject_results": by_subj,
         }
 
-# =========================================================
 # RUN
-# =========================================================
 
 if __name__ == "__main__":
     outputs = run_all()
