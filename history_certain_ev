@@ -143,7 +143,7 @@ plt.axvline(0, linestyle="--", color="gray", alpha=0.7)
 
 plt.xlim(X_MIN, X_MAX)
 plt.ylim(-0.05, 1.05)
-plt.xlabel("Expected Value Difference (Risky - Certain)")
+plt.xlabel("Difference in Expected Value (Risky - Certain)")
 plt.ylabel("P(Choose Gamble)")
 plt.title("Risky choice after previous certain option")
 plt.legend(title="Previous | Current")
