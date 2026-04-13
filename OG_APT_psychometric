@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from scipy.optimize import minimize
 
 # CONFIG
 
@@ -35,7 +36,9 @@ for col in needed:
 df = df.dropna(subset=needed).copy()
 df = df.sort_values([SUBJECT_COL, TRIAL_COL]).reset_index(drop=True)
 
+
 # DEFINE GAMBLE SIDE AND WHETHER GAMBLE WAS CHOSEN
+
 
 df["choose_left"] = (df[RESPONSE_COL] == 0).astype(int)
 df["choose_right"] = (df[RESPONSE_COL] == 1).astype(int)
@@ -55,11 +58,50 @@ df["choose_gamble"] = np.where(
     1, 0
 ).astype(int)
 
-# USE CURRENT-TRIAL DELTA SV ONLY
-
+# Restrict plotting range
 df = df[(df[DELTA_SV_COL] >= X_MIN) & (df[DELTA_SV_COL] <= X_MAX)].copy()
 
-# BINNED SUMMARY
+
+# ORIGINAL APT EQUATION
+# P(Gamble) = 1 / (1 + exp(-mu * ΔSV))
+
+
+def apt_prob(delta_sv, mu):
+    return 1 / (1 + np.exp(-mu * delta_sv))
+
+
+# FIT mu BY MAXIMUM LIKELIHOOD
+
+
+x = df[DELTA_SV_COL].to_numpy()
+y = df["choose_gamble"].to_numpy()
+
+def neg_log_likelihood(params, x, y):
+    mu = params[0]
+    p = apt_prob(x, mu)
+    p = np.clip(p, 1e-10, 1 - 1e-10)
+    return -np.sum(y * np.log(p) + (1 - y) * np.log(1 - p))
+
+result = minimize(
+    neg_log_likelihood,
+    x0=np.array([1.0]),   # initial guess for mu
+    args=(x, y),
+    method="L-BFGS-B",
+    bounds=[(0.001, 50)]
+)
+
+if not result.success:
+    raise RuntimeError(f"Optimization failed: {result.message}")
+
+mu_hat = result.x[0]
+nll = result.fun
+
+print(f"Estimated mu = {mu_hat:.4f}")
+print(f"Negative log-likelihood = {nll:.4f}")
+
+
+# BINNED OBSERVED DATA
+
 
 def binned_summary(subdf, x_col, y_col, bins):
     subdf = subdf.copy()
@@ -84,10 +126,15 @@ def binned_summary(subdf, x_col, y_col, bins):
 
     return centers, means, sems, counts
 
-# MAKE CURVE
-
 bins = np.linspace(X_MIN, X_MAX, N_BINS + 1)
 x_all, y_all, e_all, n_all = binned_summary(df, DELTA_SV_COL, "choose_gamble", bins)
+
+
+# MODEL-PREDICTED CURVE FROM EXPLICIT APT EQUATION
+
+
+x_curve = np.linspace(X_MIN, X_MAX, 400)
+y_curve = apt_prob(x_curve, mu_hat)
 
 # PLOT
 
@@ -96,7 +143,7 @@ plt.figure(figsize=(9, 6))
 plt.errorbar(
     x_all, y_all, yerr=e_all,
     fmt="o-", color="black", linewidth=2, markersize=6, capsize=4,
-    label="Original APT model (no history)"
+    label="Observed data"
 )
 
 plt.axhline(0.5, linestyle="--", color="gray", alpha=0.7)
@@ -104,16 +151,9 @@ plt.axvline(0, linestyle="--", color="gray", alpha=0.7)
 
 plt.xlim(X_MIN, X_MAX)
 plt.ylim(-0.05, 1.05)
-plt.xlabel("Difference in Subjective Value (ΔSV = Risky - Certain)")
+plt.xlabel("Difference in Subjective Value (Risky - Certain)")
 plt.ylabel("P(Choose Gamble)")
-plt.title("Original APT Model: Choice as a Function of Current-Trial ΔSV")
+plt.title("Original APT Model")
 plt.legend()
 plt.tight_layout()
 plt.show()
-
-# DEBUG OUTPUT
-
-print("Total trials used:", len(df))
-print("\nTrials per bin:")
-for xi, ni in zip(x_all, n_all):
-    print(f"x = {xi:.3f}, n = {ni}")
