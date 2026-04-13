@@ -109,18 +109,8 @@ x_0509, y_0509, e_0509 = binned_summary(df[cond_05_09], DELTA_SV_COL, "choose_ga
 x_0905, y_0905, e_0905 = binned_summary(df[cond_09_05], DELTA_SV_COL, "choose_gamble", bins)
 x_0909, y_0909, e_0909 = binned_summary(df[cond_09_09], DELTA_SV_COL, "choose_gamble", bins)
 
-# optional overall line restricted to previous-gamble trials only
-x_all, y_all, e_all = binned_summary(df, DELTA_SV_COL, "choose_gamble", bins)
 
 # PLOT
-
-plt.figure(figsize=(10, 6))
-
-plt.errorbar(
-    x_all, y_all, yerr=e_all,
-    fmt="o-", color="black", linewidth=2, markersize=5, capsize=4,
-    label="P(Choose Gamble | previous gamble)"
-)
 
 plt.errorbar(
     x_0505, y_0505, yerr=e_0505,
