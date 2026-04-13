@@ -127,7 +127,6 @@ x_all, y_all, e_all = binned_summary(df, "ev_diff", "choose_gamble", bins)
 # PLOT
 
 plt.figure(figsize=(10, 6))
-)
 
 plt.errorbar(
     x_0505, y_0505, yerr=e_0505,
