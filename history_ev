@@ -119,34 +119,29 @@ x_pc09, y_pc09, e_pc09 = binned_summary(df[cond_pc_09], "DELTA_EV", "choose_gamb
 
 plt.figure(figsize=(10, 6))
 
-plt.errorbar(
-    x_all, y_all, yerr=e_all,
-    fmt="o-", color="black", linewidth=2, markersize=5, capsize=4,
-    label="P(Choose Gamble)"
-)
 
 plt.errorbar(
     x_pc05, y_pc05, yerr=e_pc05,
     fmt="o--", linewidth=2, markersize=5, capsize=4,
-    label="P(Gamble | previous certain, p=0.5)"
+    label="Previous certain, current p=0.5"
 )
 
 plt.errorbar(
     x_pc09, y_pc09, yerr=e_pc09,
     fmt="o--", linewidth=2, markersize=5, capsize=4,
-    label="P(Gamble | previous certain, p=0.9)"
+    label="Previous certain, current p=0.9"
 )
 
 plt.errorbar(
     x_pg05, y_pg05, yerr=e_pg05,
     fmt="o--", linewidth=2, markersize=5, capsize=4,
-    label="P(Gamble | previous gamble, p=0.5)"
+    label="Previous gamble, current p=0.5"
 )
 
 plt.errorbar(
     x_pg09, y_pg09, yerr=e_pg09,
     fmt="o--", linewidth=2, markersize=5, capsize=4,
-    label="P(Gamble | previous gamble, p=0.9)"
+    label="Previous gamble, current p=0.9"
 )
 
 plt.axhline(0.5, linestyle="--", color="gray", alpha=0.7)
