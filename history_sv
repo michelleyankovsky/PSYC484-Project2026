@@ -96,7 +96,6 @@ cond_pc_09 = (df["prev_certain"] == 1) & np.isclose(df["p_gamble_trial"], 0.9)
 
 bins = np.linspace(X_MIN, X_MAX, N_BINS + 1)
 
-x_all, y_all, e_all = binned_summary(df, DELTA_SV_COL, "choose_gamble", bins)
 
 x_pg05, y_pg05, e_pg05 = binned_summary(df[cond_pg_05], DELTA_SV_COL, "choose_gamble", bins)
 x_pg09, y_pg09, e_pg09 = binned_summary(df[cond_pg_09], DELTA_SV_COL, "choose_gamble", bins)
@@ -108,33 +107,27 @@ x_pc09, y_pc09, e_pc09 = binned_summary(df[cond_pc_09], DELTA_SV_COL, "choose_ga
 plt.figure(figsize=(10, 6))
 
 plt.errorbar(
-    x_all, y_all, yerr=e_all,
-    fmt="o-", color="black", linewidth=2, markersize=5, capsize=4,
-    label="P(Choose Gamble)"
-)
-
-plt.errorbar(
     x_pc05, y_pc05, yerr=e_pc05,
     fmt="o--", linewidth=2, markersize=5, capsize=4,
-    label="P(Gamble | previous certain, p=0.5)"
+    label="Previous certain, current p=0.5"
 )
 
 plt.errorbar(
     x_pc09, y_pc09, yerr=e_pc09,
     fmt="o--", linewidth=2, markersize=5, capsize=4,
-    label="P(Gamble | previous certain, p=0.9)"
+    label="Previous certain, current p=0.9"
 )
 
 plt.errorbar(
     x_pg05, y_pg05, yerr=e_pg05,
     fmt="o--", linewidth=2, markersize=5, capsize=4,
-    label="P(Gamble | previous gamble, p=0.5)"
+    label="Previous gamble, current p=0.5"
 )
 
 plt.errorbar(
     x_pg09, y_pg09, yerr=e_pg09,
     fmt="o--", linewidth=2, markersize=5, capsize=4,
-    label="P(Gamble | previous gamble, p=0.9)"
+    label="Previous gamble, current p=0.9"
 )
 
 plt.axhline(0.5, linestyle="--", color="gray", alpha=0.7)
@@ -148,6 +141,8 @@ plt.title("History effect on risky choice by gamble probability")
 plt.legend()
 plt.tight_layout()
 plt.show()
+
+# DEBUG COUNTS
 
 print("Total trials used:", len(df))
 print("Prev gamble,  p=0.5:", cond_pg_05.sum())
