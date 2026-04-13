@@ -141,9 +141,7 @@ plt.legend(title="Previous | Current")
 plt.tight_layout()
 plt.show()
 
-# =========================================================
 # DEBUG
-# =========================================================
 
 print("Total previous-certain trials used:", len(df))
 print("1.0 | 0.5:", cond_10_05.sum())
