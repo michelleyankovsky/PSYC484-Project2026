@@ -97,21 +97,15 @@ x_pc, y_pc, e_pc = binned_summary(
 plt.figure(figsize=(9, 6))
 
 plt.errorbar(
-    x_all, y_all, yerr=e_all,
-    fmt="o-", color="black", linewidth=2, markersize=5, capsize=4,
-    label="P(Choose Gamble)"
-)
-
-plt.errorbar(
     x_pg, y_pg, yerr=e_pg,
     fmt="o--", linewidth=2, markersize=5, capsize=4,
-    label="P(Gamble | previous gamble)"
+    label="Previous choice: gamble"
 )
 
 plt.errorbar(
     x_pc, y_pc, yerr=e_pc,
     fmt="o--", linewidth=2, markersize=5, capsize=4,
-    label="P(Gamble | previous certain)"
+    label="Previous choice: certain"
 )
 
 plt.axhline(0.5, linestyle="--", color="gray", alpha=0.7)
@@ -121,7 +115,7 @@ plt.xlim(X_MIN, X_MAX)
 plt.ylim(-0.05, 1.05)
 plt.xlabel("Difference in Subjective Value (Risky - Certain)")
 plt.ylabel("P(Choose Gamble)")
-plt.title("History effect on risky choice")
+plt.title("Probability of gambling as a function on previous choice")
 plt.legend()
 plt.tight_layout()
 plt.show()
